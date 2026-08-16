@@ -109,6 +109,9 @@
 
 		TTSEngine = $settings?.audio?.tts?.engine ?? '';
 		TTSEngineConfig = $settings?.audio?.tts?.engineConfig ?? { dtype: 'q8' };
+		if (TTSEngine === 'browser-kokoro') {
+			TTSEngineConfig = { ...TTSEngineConfig, dtype: 'q8' };
+		}
 
 		if ($settings?.audio?.tts?.defaultVoice === $config.audio.tts.voice) {
 			voice = $settings?.audio?.tts?.voice ?? $config.audio.tts.voice ?? '';
@@ -252,11 +255,7 @@
 						ariaLabel={$i18n.t('Kokoro.js Dtype')}
 						placeholder={$i18n.t('Select dtype')}
 					>
-						<option value="" disabled selected>{$i18n.t('Select dtype')}</option>
-						<option value="fp32">fp32</option>
-						<option value="fp16">fp16</option>
 						<option value="q8">q8</option>
-						<option value="q4">q4</option>
 					</SettingsSelect>
 				</UserSettingRow>
 			{/if}

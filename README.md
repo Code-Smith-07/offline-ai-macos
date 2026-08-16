@@ -190,7 +190,7 @@ Generated artifacts:
 
 ```text
 dist-macos/Offline AI.app
-dist-macos/Offline-AI-1.0.5-arm64.dmg
+dist-macos/Offline-AI-1.0.7-arm64.dmg
 ```
 
 The local build is ad-hoc signed for personal installation. Public distribution without Gatekeeper warnings requires an Apple Developer ID certificate, hardened runtime, notarization, and stapling.
@@ -199,7 +199,7 @@ The local build is ad-hoc signed for personal installation. Public distribution 
 
 Graphical installation:
 
-1. Open `dist-macos/Offline-AI-1.0.5-arm64.dmg`.
+1. Open `dist-macos/Offline-AI-1.0.7-arm64.dmg`.
 2. Drag **Offline AI.app** into **Applications**.
 3. Start Ollama once if macOS has not already initialized it.
 4. Open **Offline AI** from Applications.
@@ -207,7 +207,7 @@ Graphical installation:
 Terminal installation of a local build:
 
 ```bash
-hdiutil attach "dist-macos/Offline-AI-1.0.5-arm64.dmg"
+hdiutil attach "dist-macos/Offline-AI-1.0.7-arm64.dmg"
 ditto "/Volumes/Offline AI/Offline AI.app" "/Applications/Offline AI.app"
 hdiutil detach "/Volumes/Offline AI"
 open "/Applications/Offline AI.app"

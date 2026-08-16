@@ -119,14 +119,14 @@
 	const setOfflineAIDesktopDefaults = async () => {
 		if (
 			!$page.url.searchParams.has('desktop_build') ||
-			localStorage.getItem('offline-ai-natural-tts-v1') === 'configured'
+			localStorage.getItem('offline-ai-natural-tts-v2') === 'configured'
 		) {
 			return;
 		}
 
 		// Preserve an explicit choice. For existing desktop installs that still use
 		// the browser default, switch once to the bundled natural offline voice.
-		if (!$settings.audio?.tts?.engine) {
+		if (!$settings.audio?.tts?.engine || $settings.audio?.tts?.engine === 'browser-kokoro') {
 			const updatedSettings = {
 				...$settings,
 				audio: {
@@ -148,7 +148,7 @@
 			await updateUserSettings(localStorage.token, { ui: updatedSettings });
 		}
 
-		localStorage.setItem('offline-ai-natural-tts-v1', 'configured');
+		localStorage.setItem('offline-ai-natural-tts-v2', 'configured');
 	};
 
 	const setModels = async () => {

@@ -56,6 +56,7 @@
 	import CodeExecutions from './CodeExecutions.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
+	import { isNativeTTSAvailable, speakNativeTTS, stopNativeTTS } from '$lib/utils/nativeTTS';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 	import FollowUps from './ResponseMessage/FollowUps.svelte';
 	import { fade } from 'svelte/transition';
@@ -222,6 +223,7 @@
 		speakAbort = null;
 
 		try {
+			stopNativeTTS();
 			speechSynthesis.cancel();
 			$audioQueue?.stop();
 		} catch {}
@@ -251,10 +253,21 @@
 
 		speaking = true;
 
-		if (
-			$config.audio.tts.engine === '' &&
-			$settings.audio?.tts?.engine !== 'browser-kokoro'
-		) {
+		if (isNativeTTSAvailable()) {
+			loadingSpeech = true;
+			try {
+				await speakNativeTTS(content, $settings.audio?.tts?.playbackRate ?? 1);
+			} catch (error) {
+				console.error(error);
+				toast.error($i18n.t('Voice audio playback failed'));
+			} finally {
+				loadingSpeech = false;
+				speaking = false;
+			}
+			return;
+		}
+
+		if ($config.audio.tts.engine === '' && $settings.audio?.tts?.engine !== 'browser-kokoro') {
 			let voices = [];
 			const getVoicesLoop = setInterval(() => {
 				voices = speechSynthesis.getVoices();
@@ -304,34 +317,40 @@
 			console.debug('Prepared message content for TTS', messageContentParts, 'voice:', voiceId);
 
 			if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-				if (!$TTSWorker) {
-					await TTSWorker.set(
-						new KokoroWorker({
-							dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-						})
-					);
-
-					await $TTSWorker.init();
-				}
-
-				for (const [, sentence] of messageContentParts.entries()) {
-					if (signal.aborted) return;
-
-					const url = await $TTSWorker
-						.generate({ text: sentence, voice: voiceId })
-						.catch((error) => {
-							console.error(error);
-							toast.error(`${error}`);
-							speaking = false;
-							loadingSpeech = false;
-						});
-
-					if (signal.aborted) return;
-
-					if (url && speaking) {
-						$audioQueue.enqueue(url);
-						loadingSpeech = false;
+				try {
+					if (!$TTSWorker) {
+						TTSWorker.set(new KokoroWorker('q8'));
 					}
+					await $TTSWorker.init();
+
+					for (const [, sentence] of messageContentParts.entries()) {
+						if (signal.aborted) return;
+						const url = await $TTSWorker.generate({ text: sentence, voice: voiceId });
+						if (signal.aborted) return;
+
+						if (url && speaking) {
+							$audioQueue.enqueue(url);
+							loadingSpeech = false;
+						}
+					}
+				} catch (error) {
+					console.error(error);
+					toast.warning($i18n.t('Natural voice is unavailable; using the macOS voice instead.'));
+					$TTSWorker?.terminate();
+					TTSWorker.set(null);
+					loadingSpeech = false;
+
+					const speech = new SpeechSynthesisUtterance(content);
+					speech.rate = $settings.audio?.tts?.playbackRate ?? 1;
+					speech.onend = () => {
+						speaking = false;
+					};
+					speech.onerror = () => {
+						speaking = false;
+						toast.error($i18n.t('Voice audio playback failed'));
+					};
+					speechSynthesis.cancel();
+					speechSynthesis.speak(speech);
 				}
 			} else {
 				for (const [, sentence] of messageContentParts.entries()) {

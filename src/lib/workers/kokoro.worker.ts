@@ -1,9 +1,21 @@
 import { KokoroTTS } from 'kokoro-js';
+import { env as transformersEnv } from '@huggingface/transformers';
 
 const KOKORO_REMOTE_PREFIX =
 	'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/';
 const KOKORO_LOCAL_PREFIX = `${self.location.origin}/models/kokoro/`;
 const nativeFetch = self.fetch.bind(self);
+
+// Keep the packaged macOS app completely offline. Transformers.js otherwise
+// defaults to jsDelivr for the ONNX runtime bootstrap, which can leave WKWebView
+// waiting indefinitely when the network is unavailable. A single WASM thread is
+// also substantially more reliable in WebKit workers than a nested pthread pool.
+const onnxWasm = transformersEnv.backends.onnx.wasm;
+if (onnxWasm) {
+	onnxWasm.wasmPaths = `${self.location.origin}/wasm/`;
+	onnxWasm.numThreads = 1;
+	onnxWasm.proxy = false;
+}
 
 // Kokoro.js hard-codes Hugging Face URLs for both its ONNX weights and voice
 // embeddings. Redirect only this model to the copy bundled with Offline AI.
@@ -25,6 +37,7 @@ self.onmessage = async (event) => {
 	if (type === 'init') {
 		let { model_id, dtype } = payload;
 		model_id = model_id || DEFAULT_MODEL_ID; // Use default model if none provided
+		dtype = 'q8'; // Offline AI bundles the fast q8 Kokoro weights.
 
 		self.postMessage({ status: 'init:start' });
 
@@ -39,7 +52,10 @@ self.onmessage = async (event) => {
 			self.postMessage({ status: 'init:complete' });
 		} catch (error) {
 			isInitialized = false; // Ensure it's marked as false on failure
-			self.postMessage({ status: 'init:error', error: error.message });
+			self.postMessage({
+				status: 'init:error',
+				error: error instanceof Error ? error.message : String(error)
+			});
 		}
 	}
 
@@ -60,7 +76,10 @@ self.onmessage = async (event) => {
 			// URL so WebKit resolves it in the same context as the audio element.
 			self.postMessage({ status: 'generate:complete', audioBlob: blob });
 		} catch (error) {
-			self.postMessage({ status: 'generate:error', error: error.message });
+			self.postMessage({
+				status: 'generate:error',
+				error: error instanceof Error ? error.message : String(error)
+			});
 		}
 	}
 

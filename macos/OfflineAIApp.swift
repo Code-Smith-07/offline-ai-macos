@@ -1,13 +1,16 @@
 import Cocoa
+import AVFoundation
 import WebKit
 
 private let backendURL = URL(string: "http://127.0.0.1:17840")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, AVSpeechSynthesizerDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var backendProcess: Process?
     private var healthAttempts = 0
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    private var speechRequestIDs: [ObjectIdentifier: String] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
@@ -22,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "offlineAI")
         if let process = backendProcess, process.isRunning {
             process.terminate()
         }
@@ -60,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         // audio element to continue playback after the initial button click.
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        configuration.userContentController.add(self, name: "offlineAI")
+
+        speechSynthesizer.delegate = self
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -151,6 +159,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         <body><main><img class="mark" src="file://\(Bundle.main.resourcePath!)/AppIcon.png"><h1>\(title)</h1><p>\(detail)</p></main></body></html>
         """
         webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard message.name == "offlineAI",
+              let payload = message.body as? [String: Any],
+              let action = payload["action"] as? String else { return }
+
+        switch action {
+        case "speak":
+            guard let text = payload["text"] as? String,
+                  let requestID = payload["requestId"] as? String,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+            let playbackRate = (payload["playbackRate"] as? NSNumber)?.doubleValue ?? 1
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.voice = preferredSpeechVoice()
+            utterance.volume = 1
+            utterance.rate = min(
+                AVSpeechUtteranceMaximumSpeechRate,
+                max(AVSpeechUtteranceMinimumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(playbackRate))
+            )
+            speechRequestIDs[ObjectIdentifier(utterance)] = requestID
+            speechSynthesizer.speak(utterance)
+
+        case "stopSpeech":
+            speechSynthesizer.stopSpeaking(at: .immediate)
+
+        default:
+            break
+        }
+    }
+
+    private func preferredSpeechVoice() -> AVSpeechSynthesisVoice? {
+        let englishVoices = AVSpeechSynthesisVoice.speechVoices().filter {
+            $0.language.lowercased().hasPrefix("en")
+        }
+
+        if #available(macOS 10.15, *) {
+            if let premium = englishVoices.first(where: { $0.quality == .premium }) {
+                return premium
+            }
+            if let enhanced = englishVoices.first(where: { $0.quality == .enhanced }) {
+                return enhanced
+            }
+        }
+
+        return AVSpeechSynthesisVoice(language: Locale.current.language.languageCode?.identifier ?? "en-US")
+            ?? AVSpeechSynthesisVoice(language: "en-US")
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                           didFinish utterance: AVSpeechUtterance) {
+        sendSpeechStatus(for: utterance, status: "finished")
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                           didCancel utterance: AVSpeechUtterance) {
+        sendSpeechStatus(for: utterance, status: "cancelled")
+    }
+
+    private func sendSpeechStatus(for utterance: AVSpeechUtterance, status: String) {
+        guard let requestID = speechRequestIDs.removeValue(forKey: ObjectIdentifier(utterance)) else { return }
+        let detail = ["requestId": requestID, "status": status]
+        guard let data = try? JSONSerialization.data(withJSONObject: detail),
+              let json = String(data: data, encoding: .utf8) else { return }
+
+        webView.evaluateJavaScript(
+            "window.dispatchEvent(new CustomEvent('offline-ai-native-tts', { detail: \(json) }));"
+        )
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,

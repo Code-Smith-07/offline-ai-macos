@@ -16,6 +16,7 @@
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
+	import { isNativeTTSAvailable } from '$lib/utils/nativeTTS';
 
 	const dispatch = createEventDispatcher();
 
@@ -1905,11 +1906,11 @@
 																		? (e.key === 'Enter' || e.keyCode === 13) && isCtrlPressed
 																		: (e.key === 'Enter' || e.keyCode === 13) && !e.shiftKey;
 
-																	if (enterPressed) {
-																		e.preventDefault();
-																		if (prompt !== '' || files.length > 0) {
-																			await submitCurrentPrompt();
-																		}
+																if (enterPressed) {
+																	e.preventDefault();
+																	if (prompt !== '' || files.length > 0) {
+																		await submitCurrentPrompt();
+																	}
 																}
 															}
 														}
@@ -2440,16 +2441,26 @@
 
 																stream = null;
 
-																if ($settings.audio?.tts?.engine === 'browser-kokoro') {
+																if (
+																	$settings.audio?.tts?.engine === 'browser-kokoro' &&
+																	!isNativeTTSAvailable()
+																) {
 																	// If the user has not initialized the TTS worker, initialize it
 																	if (!$TTSWorker) {
-																		await TTSWorker.set(
-																			new KokoroWorker({
-																				dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-																			})
-																		);
+																		TTSWorker.set(new KokoroWorker('q8'));
 
-																		await $TTSWorker.init();
+																		try {
+																			await $TTSWorker.init();
+																		} catch (error) {
+																			console.error(error);
+																			toast.warning(
+																				$i18n.t(
+																					'Natural voice is unavailable; using the macOS voice instead.'
+																				)
+																			);
+																			$TTSWorker?.terminate();
+																			TTSWorker.set(null);
+																		}
 																	}
 																}
 

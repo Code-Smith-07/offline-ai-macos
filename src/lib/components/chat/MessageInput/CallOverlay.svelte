@@ -14,6 +14,7 @@
 	import VideoInputMenu from './CallOverlay/VideoInputMenu.svelte';
 	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
+	import { isNativeTTSAvailable, speakNativeTTS, stopNativeTTS } from '$lib/utils/nativeTTS';
 
 	const i18n = getContext('i18n');
 
@@ -469,6 +470,7 @@
 			speechSynthesis.cancel();
 			currentUtterance = null;
 		}
+		stopNativeTTS();
 
 		const audioElement = document.getElementById('audioElement');
 		if (audioElement) {
@@ -485,6 +487,8 @@
 	// Audio cache map where key is the content and value is the Audio object.
 	const audioCache = new Map();
 	const emojiCache = new Map();
+	const SYSTEM_VOICE_FALLBACK = Symbol('system-voice-fallback');
+	const NATIVE_VOICE = Symbol('native-macos-voice');
 
 	const fetchAudio = async (content) => {
 		if (!audioCache.has(content)) {
@@ -497,19 +501,18 @@
 					}
 				}
 
-				if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-					const url = await $TTSWorker
-						.generate({
-							text: content,
-							voice: getVoiceId()
-						})
-						.catch((error) => {
-							console.error(error);
-							toast.error(`${error}`);
-						});
+				if (isNativeTTSAvailable()) {
+					audioCache.set(content, NATIVE_VOICE);
+				} else if ($settings.audio?.tts?.engine === 'browser-kokoro') {
+					const url = await $TTSWorker?.generate({
+						text: content,
+						voice: getVoiceId()
+					});
 
 					if (url) {
 						audioCache.set(content, new Audio(url));
+					} else {
+						audioCache.set(content, SYSTEM_VOICE_FALLBACK);
 					}
 				} else if ($config.audio.tts.engine !== '') {
 					const res = await synthesizeOpenAISpeech(localStorage.token, getVoiceId(), content).catch(
@@ -529,6 +532,8 @@
 				}
 			} catch (error) {
 				console.error('Error synthesizing speech:', error);
+				toast.warning($i18n.t('Using the macOS voice for this response.'));
+				audioCache.set(content, SYSTEM_VOICE_FALLBACK);
 			}
 		}
 
@@ -553,7 +558,12 @@
 						emoji = null;
 					}
 
-					if (
+					const cachedAudio = audioCache.get(content);
+					if (cachedAudio === NATIVE_VOICE) {
+						await speakNativeTTS(content, $settings.audio?.tts?.playbackRate ?? 1);
+					} else if (cachedAudio === SYSTEM_VOICE_FALLBACK) {
+						await speakSpeechSynthesisHandler(content);
+					} else if (
 						$settings.audio?.tts?.engine === 'browser-kokoro' ||
 						$config.audio.tts.engine !== ''
 					) {
@@ -564,8 +574,7 @@
 								`Playing audio for content: ${content}`
 							);
 
-							const audio = audioCache.get(content);
-							await playAudio(audio); // Here ensure that playAudio is indeed correct method to execute
+							await playAudio(cachedAudio); // Here ensure that playAudio is indeed correct method to execute
 							console.log(`Played audio for content: ${content}`);
 							await new Promise((resolve) => setTimeout(resolve, 200)); // Wait before retrying to reduce tight loop
 						} catch (error) {
