@@ -1,0 +1,15 @@
+Offline AI for macOS
+Copyright 2026 Code-Smith-07
+
+This software is an unofficial derivative distribution of Open WebUI. Open
+WebUI and its contributors retain all rights and notices stated in LICENSE,
+LICENSE_NOTICE, and LICENSE_HISTORY. This distribution is not endorsed by the
+Open WebUI project.
+
+Natural speech functionality uses Kokoro-82M and its ONNX conversion, together
+with kokoro-js, Transformers.js, and ONNX Runtime. Local language-model serving
+uses Ollama. Their copyright and license notices are summarized in
+THIRD_PARTY_NOTICES.md and remain in force.
+
+The Open WebUI name, icon, and all third-party trademarks remain the property
+of their respective owners. No trademark license or endorsement is implied.
