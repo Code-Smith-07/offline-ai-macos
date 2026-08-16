@@ -190,7 +190,7 @@ Generated artifacts:
 
 ```text
 dist-macos/Offline AI.app
-dist-macos/Offline-AI-1.0.8-arm64.dmg
+dist-macos/Offline-AI-1.0.9-arm64.dmg
 ```
 
 The local build is ad-hoc signed for personal installation. Public distribution without Gatekeeper warnings requires an Apple Developer ID certificate, hardened runtime, notarization, and stapling.
@@ -199,7 +199,7 @@ The local build is ad-hoc signed for personal installation. Public distribution 
 
 Graphical installation:
 
-1. Open `dist-macos/Offline-AI-1.0.8-arm64.dmg`.
+1. Open `dist-macos/Offline-AI-1.0.9-arm64.dmg`.
 2. Drag **Offline AI.app** into **Applications**.
 3. Start Ollama once if macOS has not already initialized it.
 4. Open **Offline AI** from Applications.
@@ -207,7 +207,7 @@ Graphical installation:
 Terminal installation of a local build:
 
 ```bash
-hdiutil attach "dist-macos/Offline-AI-1.0.8-arm64.dmg"
+hdiutil attach "dist-macos/Offline-AI-1.0.9-arm64.dmg"
 ditto "/Volumes/Offline AI/Offline AI.app" "/Applications/Offline AI.app"
 hdiutil detach "/Volumes/Offline AI"
 open "/Applications/Offline AI.app"
@@ -223,7 +223,7 @@ If Gatekeeper blocks an ad-hoc personal build, Control-click the app, choose **O
 | Ollama API | `http://127.0.0.1:11434` |
 | Open WebUI data | `~/Library/Application Support/Offline AI` |
 | Logs | `~/Library/Logs/Offline AI` |
-| Ollama models | `/Volumes/Vishwateja/ollama-models` |
+| Ollama models | Most populated of `/Volumes/Vishwateja/ollama-models`, `/Volumes/Vishwateja/Ollama`, or `~/.ollama/models` |
 | Hugging Face models | `/Volumes/Vishwateja/Hugging Face` |
 
 Portable overrides:
@@ -233,6 +233,8 @@ export OFFLINE_AI_OLLAMA_MODELS_DIR="/path/to/ollama-models"
 export OFFLINE_AI_HF_MODELS_DIR="/path/to/hugging-face-models"
 export OFFLINE_AI_PYTHON_SOURCE="/path/to/portable-python"
 ```
+
+When `OFFLINE_AI_OLLAMA_MODELS_DIR` is set, that explicit location always wins. Without an override, the app counts manifests in the known stores and selects the one containing the most models; this avoids silently attaching Ollama to an old but still-existing directory.
 
 The packaged app binds Open WebUI to loopback and disables login for a single-user offline desktop experience. Do not expose port `17840` to other machines without re-enabling authentication and reviewing Open WebUI's deployment security guidance.
 

@@ -5,9 +5,26 @@ RESOURCE_DIR="${0:A:h}"
 APP_SUPPORT="$HOME/Library/Application Support/Offline AI"
 LOG_DIR="$HOME/Library/Logs/Offline AI"
 DATA_DIR="$APP_SUPPORT/data"
-OLLAMA_MODELS_DIR="${OFFLINE_AI_OLLAMA_MODELS_DIR:-/Volumes/Vishwateja/ollama-models}"
-if [[ ! -d "$OLLAMA_MODELS_DIR" && -d "/Volumes/Vishwateja/Ollama" ]]; then
-  OLLAMA_MODELS_DIR="/Volumes/Vishwateja/Ollama"
+if [[ -n "${OFFLINE_AI_OLLAMA_MODELS_DIR:-}" ]]; then
+  # An explicit override is authoritative, even when another store happens to
+  # contain more manifests.
+  OLLAMA_MODELS_DIR="$OFFLINE_AI_OLLAMA_MODELS_DIR"
+else
+  # The external disk has used both names over time. Pick the populated model
+  # store instead of stopping at the first directory that merely exists.
+  OLLAMA_MODELS_DIR=""
+  OLLAMA_MANIFEST_COUNT=-1
+  for candidate in \
+    "/Volumes/Vishwateja/ollama-models" \
+    "/Volumes/Vishwateja/Ollama" \
+    "$HOME/.ollama/models"; do
+    [[ -d "$candidate" ]] || continue
+    manifest_count="$(find "$candidate/manifests" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    if (( manifest_count > OLLAMA_MANIFEST_COUNT )); then
+      OLLAMA_MODELS_DIR="$candidate"
+      OLLAMA_MANIFEST_COUNT=$manifest_count
+    fi
+  done
 fi
 OLLAMA_URL="http://127.0.0.1:11434"
 WEBUI_PORT="17840"
@@ -16,6 +33,9 @@ mkdir -p "$APP_SUPPORT" "$LOG_DIR" "$DATA_DIR"
 exec >>"$LOG_DIR/backend.log" 2>&1
 
 echo "[$(date)] Starting Offline AI"
+if [[ -n "$OLLAMA_MODELS_DIR" ]]; then
+  echo "Selected Ollama model store: $OLLAMA_MODELS_DIR"
+fi
 
 SECRET_FILE="$APP_SUPPORT/.webui_secret_key"
 if [[ ! -s "$SECRET_FILE" ]]; then

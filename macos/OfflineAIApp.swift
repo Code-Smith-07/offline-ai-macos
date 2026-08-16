@@ -3,12 +3,13 @@ import WebKit
 
 private let backendURL = URL(string: "http://127.0.0.1:17840")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, NSSpeechSynthesizerDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var backendProcess: Process?
     private var healthAttempts = 0
-    private var speechProcess: Process?
+    private var speechSynthesizer: NSSpeechSynthesizer?
+    private var speechRequestID: String?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
@@ -183,41 +184,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func startNativeSpeech(text: String, requestID: String, playbackRate: Double) {
         stopNativeSpeech()
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
-        let wordsPerMinute = min(400, max(80, Int(190 * playbackRate)))
-        process.arguments = ["-v", "Aman (English (India))", "-r", String(wordsPerMinute), text]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.terminationHandler = { [weak self] completedProcess in
-            let status = completedProcess.terminationStatus == 0 ? "finished" : "cancelled"
-            DispatchQueue.main.async {
-                guard let self else { return }
-                if self.speechProcess === completedProcess {
-                    self.speechProcess = nil
-                }
-                self.logNative("Speech \(status) (request \(requestID))")
-                self.sendSpeechStatus(requestID: requestID, status: status)
-            }
+        // `say -v "Aman (English (India))"` is ambiguous when both the compact
+        // and premium Aman voices are installed. Select the premium voice by
+        // its stable macOS identifier so the desktop app never falls back to
+        // the robotic compact voice merely because both share a display name.
+        let preferredVoiceIDs = [
+            "com.apple.voice.Aman.premium",
+            "com.apple.voice.Aman",
+            "com.apple.voice.Tara",
+        ]
+        let availableVoiceIDs = Set(NSSpeechSynthesizer.availableVoices.map(\.rawValue))
+        let selectedVoiceID = preferredVoiceIDs.first(where: availableVoiceIDs.contains)
+        let selectedVoice = selectedVoiceID.map(NSSpeechSynthesizer.VoiceName.init(rawValue:))
+
+        guard let synthesizer = NSSpeechSynthesizer(voice: selectedVoice) else {
+            logNative("Speech failed to start: no compatible macOS voice is installed")
+            sendSpeechStatus(
+                requestID: requestID,
+                status: "failed",
+                message: "No compatible macOS voice is installed."
+            )
+            return
         }
 
-        speechProcess = process
-        do {
-            try process.run()
-            logNative("Speech started with macOS say (request \(requestID))")
-        } catch {
-            speechProcess = nil
-            logNative("Speech failed to start: \(error.localizedDescription)")
-            sendSpeechStatus(requestID: requestID, status: "failed", message: error.localizedDescription)
+        synthesizer.delegate = self
+        synthesizer.rate = Float(min(400, max(80, 190 * playbackRate)))
+        synthesizer.volume = 1
+        speechSynthesizer = synthesizer
+        speechRequestID = requestID
+
+        guard synthesizer.startSpeaking(text) else {
+            speechSynthesizer = nil
+            speechRequestID = nil
+            logNative("Speech failed to start with voice \(selectedVoiceID ?? "system default")")
+            sendSpeechStatus(requestID: requestID, status: "failed", message: "macOS could not start speech playback.")
+            return
         }
+
+        logNative("Speech started with voice \(selectedVoiceID ?? "system default") (request \(requestID))")
     }
 
     private func stopNativeSpeech() {
-        guard let process = speechProcess else { return }
-        speechProcess = nil
-        if process.isRunning {
-            process.terminate()
+        guard let synthesizer = speechSynthesizer else { return }
+        let requestID = speechRequestID
+        speechSynthesizer = nil
+        speechRequestID = nil
+        synthesizer.delegate = nil
+        synthesizer.stopSpeaking()
+        if let requestID {
+            logNative("Speech cancelled (request \(requestID))")
+            sendSpeechStatus(requestID: requestID, status: "cancelled")
         }
+    }
+
+    func speechSynthesizer(_ sender: NSSpeechSynthesizer, didFinishSpeaking finishedSpeaking: Bool) {
+        guard sender === speechSynthesizer, let requestID = speechRequestID else { return }
+        speechSynthesizer = nil
+        speechRequestID = nil
+        let status = finishedSpeaking ? "finished" : "cancelled"
+        logNative("Speech \(status) (request \(requestID))")
+        sendSpeechStatus(requestID: requestID, status: status)
     }
 
     private func sendSpeechStatus(requestID: String, status: String, message: String? = nil) {

@@ -54,6 +54,13 @@ async def fetch_ollama_models(request: Request, user: UserModel = None):
             },
         }
         for model in raw_ollama_models['models']
+        # Embedding models are valid Ollama resources for RAG, but they cannot
+        # answer chat requests. Keep them in OLLAMA_MODELS for backend use and
+        # omit them only from the chat model selector.
+        if not (
+            'embedding' in model.get('capabilities', [])
+            and 'completion' not in model.get('capabilities', [])
+        )
     ]
 
 
