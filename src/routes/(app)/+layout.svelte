@@ -119,7 +119,7 @@
 	const setOfflineAIDesktopDefaults = async () => {
 		if (
 			!$page.url.searchParams.has('desktop_build') ||
-			localStorage.getItem('offline-ai-natural-tts-v2') === 'configured'
+			localStorage.getItem('offline-ai-desktop-audio-v3') === 'configured'
 		) {
 			return;
 		}
@@ -131,6 +131,10 @@
 				...$settings,
 				audio: {
 					...($settings.audio ?? {}),
+					stt: {
+						...($settings.audio?.stt ?? {}),
+						language: 'en'
+					},
 					tts: {
 						...($settings.audio?.tts ?? {}),
 						engine: 'browser-kokoro',
@@ -148,7 +152,7 @@
 			await updateUserSettings(localStorage.token, { ui: updatedSettings });
 		}
 
-		localStorage.setItem('offline-ai-natural-tts-v2', 'configured');
+		localStorage.setItem('offline-ai-desktop-audio-v3', 'configured');
 	};
 
 	const setModels = async () => {

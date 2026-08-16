@@ -1,16 +1,14 @@
 import Cocoa
-import AVFoundation
 import WebKit
 
 private let backendURL = URL(string: "http://127.0.0.1:17840")!
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler, AVSpeechSynthesizerDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var backendProcess: Process?
     private var healthAttempts = 0
-    private let speechSynthesizer = AVSpeechSynthesizer()
-    private var speechRequestIDs: [ObjectIdentifier: String] = [:]
+    private var speechProcess: Process?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenus()
@@ -25,7 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        speechSynthesizer.stopSpeaking(at: .immediate)
+        stopNativeSpeech()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "offlineAI")
         if let process = backendProcess, process.isRunning {
             process.terminate()
@@ -66,8 +64,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
         configuration.userContentController.add(self, name: "offlineAI")
-
-        speechSynthesizer.delegate = self
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -174,61 +170,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
             let playbackRate = (payload["playbackRate"] as? NSNumber)?.doubleValue ?? 1
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.voice = preferredSpeechVoice()
-            utterance.volume = 1
-            utterance.rate = min(
-                AVSpeechUtteranceMaximumSpeechRate,
-                max(AVSpeechUtteranceMinimumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(playbackRate))
-            )
-            speechRequestIDs[ObjectIdentifier(utterance)] = requestID
-            speechSynthesizer.speak(utterance)
+            startNativeSpeech(text: text, requestID: requestID, playbackRate: playbackRate)
 
         case "stopSpeech":
-            speechSynthesizer.stopSpeaking(at: .immediate)
+            stopNativeSpeech()
 
         default:
             break
         }
     }
 
-    private func preferredSpeechVoice() -> AVSpeechSynthesisVoice? {
-        let englishVoices = AVSpeechSynthesisVoice.speechVoices().filter {
-            $0.language.lowercased().hasPrefix("en")
+    private func startNativeSpeech(text: String, requestID: String, playbackRate: Double) {
+        stopNativeSpeech()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+        let wordsPerMinute = min(400, max(80, Int(190 * playbackRate)))
+        process.arguments = ["-v", "Aman (English (India))", "-r", String(wordsPerMinute), text]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] completedProcess in
+            let status = completedProcess.terminationStatus == 0 ? "finished" : "cancelled"
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if self.speechProcess === completedProcess {
+                    self.speechProcess = nil
+                }
+                self.logNative("Speech \(status) (request \(requestID))")
+                self.sendSpeechStatus(requestID: requestID, status: status)
+            }
         }
 
-        if #available(macOS 10.15, *) {
-            if let premium = englishVoices.first(where: { $0.quality == .premium }) {
-                return premium
-            }
-            if let enhanced = englishVoices.first(where: { $0.quality == .enhanced }) {
-                return enhanced
-            }
+        speechProcess = process
+        do {
+            try process.run()
+            logNative("Speech started with macOS say (request \(requestID))")
+        } catch {
+            speechProcess = nil
+            logNative("Speech failed to start: \(error.localizedDescription)")
+            sendSpeechStatus(requestID: requestID, status: "failed", message: error.localizedDescription)
         }
-
-        return AVSpeechSynthesisVoice(language: Locale.current.language.languageCode?.identifier ?? "en-US")
-            ?? AVSpeechSynthesisVoice(language: "en-US")
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
-                           didFinish utterance: AVSpeechUtterance) {
-        sendSpeechStatus(for: utterance, status: "finished")
+    private func stopNativeSpeech() {
+        guard let process = speechProcess else { return }
+        speechProcess = nil
+        if process.isRunning {
+            process.terminate()
+        }
     }
 
-    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
-                           didCancel utterance: AVSpeechUtterance) {
-        sendSpeechStatus(for: utterance, status: "cancelled")
-    }
-
-    private func sendSpeechStatus(for utterance: AVSpeechUtterance, status: String) {
-        guard let requestID = speechRequestIDs.removeValue(forKey: ObjectIdentifier(utterance)) else { return }
-        let detail = ["requestId": requestID, "status": status]
+    private func sendSpeechStatus(requestID: String, status: String, message: String? = nil) {
+        var detail = ["requestId": requestID, "status": status]
+        if let message {
+            detail["message"] = message
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: detail),
               let json = String(data: data, encoding: .utf8) else { return }
 
         webView.evaluateJavaScript(
             "window.dispatchEvent(new CustomEvent('offline-ai-native-tts', { detail: \(json) }));"
         )
+    }
+
+    private func logNative(_ message: String) {
+        let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/Offline AI", isDirectory: true)
+        let logURL = logsDirectory.appendingPathComponent("native.log")
+        try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+
+        let formatter = ISO8601DateFormatter()
+        let line = "[\(formatter.string(from: Date()))] \(message)\n"
+        guard let data = line.data(using: .utf8) else { return }
+
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            try? data.write(to: logURL)
+            return
+        }
+
+        guard let handle = try? FileHandle(forWritingTo: logURL) else { return }
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,

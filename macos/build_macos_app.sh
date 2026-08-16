@@ -34,7 +34,7 @@ echo "Compiling native macOS shell"
 mkdir -p "$DIST_DIR/module-cache"
 CLANG_MODULE_CACHE_PATH="$DIST_DIR/module-cache" SWIFT_MODULE_CACHE_PATH="$DIST_DIR/module-cache" /usr/bin/swiftc \
   -O -target arm64-apple-macos13.0 \
-  -framework Cocoa -framework WebKit -framework AVFoundation \
+  -framework Cocoa -framework WebKit \
   "$SCRIPT_DIR/OfflineAIApp.swift" \
   -o "$MACOS/OfflineAI"
 
