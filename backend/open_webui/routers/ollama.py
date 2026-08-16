@@ -38,6 +38,11 @@ from open_webui.models.groups import Groups
 from open_webui.models.models import Models
 from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access
+from open_webui.utils.adaptive_ollama import (
+    apply_adaptive_generation_options,
+    guard_ollama_chat_stream,
+    trim_repetition_loop,
+)
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import get_custom_headers, include_user_info_headers
 from open_webui.utils.model_ids import strip_provider_model_prefix
@@ -107,6 +112,7 @@ async def send_request(
     metadata: dict | None = None,
     api_config: dict | None = None,
     request: Request | None = None,
+    content_handler=None,
 ):
     r = None
     streaming = False
@@ -174,7 +180,7 @@ async def send_request(
 
             streaming = True
             return StreamingResponse(
-                stream_wrapper(r, passthrough=passthrough),
+                stream_wrapper(r, content_handler=content_handler, passthrough=passthrough),
                 status_code=r.status,
                 headers=response_headers,
             )
@@ -455,6 +461,14 @@ async def get_all_models(request: Request, user: UserModel | None = None):
         for model, info in zip(capability_targets, capability_responses):
             if isinstance(info, dict):
                 model['capabilities'] = info.get('capabilities', [])
+                model['parameters'] = info.get('parameters', '')
+                if isinstance(info.get('details'), dict):
+                    model['details'] = {
+                        **(model.get('details') or {}),
+                        **info['details'],
+                    }
+                if isinstance(info.get('model_info'), dict):
+                    model['model_info'] = info['model_info']
 
     models_dict = {'models': merge_models_lists(r.get('models', []) if r else None for r in responses)}
 
@@ -1163,13 +1177,23 @@ async def generate_chat_completion(
         await check_model_access(user, None, bypass_filter)
 
     url, url_idx = await get_ollama_url(request, payload['model'], url_idx, user)
+    raw_model = (request.app.state.OLLAMA_MODELS or {}).get(payload['model'], {})
+    payload, profile_name, applied_options = apply_adaptive_generation_options(payload, raw_model)
+    if applied_options:
+        log.debug(
+            'Applied Ollama profile %s to %s: %s',
+            profile_name,
+            payload['model'],
+            applied_options,
+        )
+
     api_configs = await Config.get('ollama.api_configs', {})
     api_config = resolve_api_config(api_configs, url_idx, url)
 
     prefix_id = api_config.get('prefix_id')
     payload['model'] = strip_provider_model_prefix(payload['model'], prefix_id)
 
-    return await send_request(
+    response = await send_request(
         f'{url}/api/chat',
         payload=json.dumps(payload),
         key=get_api_key(url_idx, url, api_configs),
@@ -1179,7 +1203,21 @@ async def generate_chat_completion(
         metadata=metadata,
         api_config=api_config,
         request=request,
+        content_handler=(
+            (lambda content: guard_ollama_chat_stream(content, payload['model'])) if form_data.stream else None
+        ),
     )
+
+    if not form_data.stream and isinstance(response, dict):
+        message = response.get('message') or {}
+        content = message.get('content')
+        if isinstance(content, str):
+            trimmed, changed = trim_repetition_loop(content)
+            if changed:
+                response['message'] = {**message, 'content': trimmed}
+                response['done_reason'] = 'repetition'
+                log.warning('Trimmed repetitive Ollama response for model %s', payload['model'])
+    return response
 
 
 # TODO: we should update this part once Ollama supports other types

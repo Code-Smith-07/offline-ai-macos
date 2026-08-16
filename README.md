@@ -131,6 +131,13 @@ OLLAMA_FLASH_ATTENTION=1
 
 You can override them in your environment before launching.
 
+Generation settings are adaptive as well. Before each Ollama request, Offline
+AI uses the selected model's size, quantization, capabilities, name, and baked
+Modelfile parameters to choose conservative sampling and repetition defaults.
+Values explicitly configured by the user or model are preserved. A streaming
+guard stops an answer if the model still enters an exact long-form repetition
+loop, rather than letting it consume resources indefinitely.
+
 ### Hugging Face models
 
 The Hugging Face directory is scanned for `.gguf` files up to two levels deep. Each GGUF is imported into Ollama with an `hf-` tag and then becomes a normal, runnable Ollama model. Merely finding a directory is not treated as a working model: unsupported formats such as raw PyTorch `safetensors`, TensorFlow checkpoints, or MLX weights not understood by the installed Ollama version are not advertised by this importer.
@@ -190,7 +197,7 @@ Generated artifacts:
 
 ```text
 dist-macos/Offline AI.app
-dist-macos/Offline-AI-1.0.9-arm64.dmg
+dist-macos/Offline-AI-1.0.10-arm64.dmg
 ```
 
 The local build is ad-hoc signed for personal installation. Public distribution without Gatekeeper warnings requires an Apple Developer ID certificate, hardened runtime, notarization, and stapling.
@@ -199,7 +206,7 @@ The local build is ad-hoc signed for personal installation. Public distribution 
 
 Graphical installation:
 
-1. Open `dist-macos/Offline-AI-1.0.9-arm64.dmg`.
+1. Open `dist-macos/Offline-AI-1.0.10-arm64.dmg`.
 2. Drag **Offline AI.app** into **Applications**.
 3. Start Ollama once if macOS has not already initialized it.
 4. Open **Offline AI** from Applications.
@@ -207,7 +214,7 @@ Graphical installation:
 Terminal installation of a local build:
 
 ```bash
-hdiutil attach "dist-macos/Offline-AI-1.0.9-arm64.dmg"
+hdiutil attach "dist-macos/Offline-AI-1.0.10-arm64.dmg"
 ditto "/Volumes/Offline AI/Offline AI.app" "/Applications/Offline AI.app"
 hdiutil detach "/Volumes/Offline AI"
 open "/Applications/Offline AI.app"
